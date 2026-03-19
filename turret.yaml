@@ -18,6 +18,10 @@ connectors:
     pins: [pos, neg]
     value: 470uF
 
+  resistor:
+    pins: [pos, neg]
+    value: 220O
+
 connections:
   - esp32.GPIO18: servo_pan.signal
   - esp32.GPIO19: servo_tilt.signal
@@ -26,10 +30,12 @@ connections:
   - usb_power.5V: servo_pan.vcc
   - usb_power.5V: servo_tilt.vcc
   - usb_power.5V: servo_trigger.vcc
+  - usb_power.5V: resistor.vcc
   - usb_power.5V: capacitor.pos
 
   - usb_power.GND: servo_pan.gnd
   - usb_power.GND: servo_tilt.gnd
   - usb_power.GND: servo_trigger.gnd
   - usb_power.GND: capacitor.neg
+  - usb_power.GND: resistor.neg
   - usb_power.GND: esp32.GND

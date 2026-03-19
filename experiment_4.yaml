@@ -12,6 +12,10 @@ connectors:
     pins: [pos, neg]
     value: 470uF
 
+  resistor:
+    pins: [pos, neg]
+    value: 220O
+
 connections:
   # Servo control signal
   - esp32.GPIO18: servo_pan.signal
@@ -19,10 +23,12 @@ connections:
   # Servo power (from USB, not 3V3 — servos need more current)
   - usb_power.5V: servo_pan.vcc
   - usb_power.5V: capacitor.pos
+  - usb_power.5V: resistor.pos
 
   # Ground (common ground required)
   - usb_power.GND: servo_pan.gnd
   - usb_power.GND: capacitor.neg
+  - usb_power.GND: resistor.neg
   - usb_power.GND: esp32.GND
 
 notes:
