@@ -1,0 +1,9 @@
+# Default sdkconfig options
+# These are applied when no sdkconfig exists yet.
+# Run `idf.py menuconfig` to customize further.
+
+# Serial flasher config
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Log level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

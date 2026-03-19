@@ -1,0 +1,27 @@
+connectors:
+  esp32:
+    pins: [GPIO4, GPIO5, 3V3, GND]
+
+  button:
+    pins: [a, b]
+
+  led:
+    pins: [anode, cathode]
+
+  resistor_led:
+    pins: [a, b]
+    value: 220Ω
+
+  resistor_pulldown:
+    pins: [a, b]
+    value: 10kΩ
+
+connections:
+  - esp32.GPIO5: led.anode
+  - led.cathode: resistor_led.a
+  - resistor_led.b: esp32.GND
+
+  - esp32.GPIO4: button.a
+  - button.b: esp32.3V3
+  - esp32.GPIO4: resistor_pulldown.a
+  - resistor_pulldown.b: esp32.GND

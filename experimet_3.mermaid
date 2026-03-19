@@ -1,0 +1,17 @@
+flowchart LR
+    N_capacitor["capacitor<br/>470uF"]
+    N_esp32["esp32"]
+    N_potentiometer["potentiometer<br/>10k"]
+    N_servo_pan["servo_pan"]
+    N_usb_power["usb_power"]
+
+    N_esp32 -- "GPIO18 ↔ signal" --> N_servo_pan
+    N_potentiometer -- "signal ↔ GPIO34" --> N_esp32
+    N_esp32 -- "3V3 ↔ vcc" --> N_potentiometer
+    N_esp32 -- "GND ↔ gnd" --> N_potentiometer
+    N_usb_power -- "5V ↔ vcc" --> N_servo_pan
+    N_usb_power -- "5V ↔ pos" --> N_capacitor
+    N_usb_power -- "GND ↔ gnd" --> N_servo_pan
+    N_usb_power -- "GND ↔ neg" --> N_capacitor
+    N_usb_power -- "GND ↔ GND" --> N_esp32
+

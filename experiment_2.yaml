@@ -1,0 +1,22 @@
+connectors:
+  esp32:
+    pins: [GPIO5, GPIO32, 3V3, GND]
+
+  potentiometer:
+    pins: [left, wiper, right]
+
+  led:
+    pins: [anode, cathode]
+
+  resistor_led:
+    pins: [a, b]
+    value: 220Ω
+
+connections:
+  - esp32.GPIO5: led.anode
+  - led.cathode: resistor_led.a
+  - resistor_led.b: esp32.GND
+
+  - esp32.3V3: potentiometer.right
+  - esp32.GND: potentiometer.left
+  - esp32.GPIO32: potentiometer.wiper

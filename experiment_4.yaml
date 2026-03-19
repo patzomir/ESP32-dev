@@ -1,0 +1,32 @@
+connectors:
+  esp32:
+    pins: [GPIO18, 3V3, GND]
+
+  usb_power:
+    pins: [5V, GND]
+
+  servo_pan:
+    pins: [signal, vcc, gnd]
+
+  capacitor:
+    pins: [pos, neg]
+    value: 470uF
+
+connections:
+  # Servo control signal
+  - esp32.GPIO18: servo_pan.signal
+
+  # Servo power (from USB, not 3V3 — servos need more current)
+  - usb_power.5V: servo_pan.vcc
+  - usb_power.5V: capacitor.pos
+
+  # Ground (common ground required)
+  - usb_power.GND: servo_pan.gnd
+  - usb_power.GND: capacitor.neg
+  - usb_power.GND: esp32.GND
+
+notes:
+  - ESP32 connects to Wi-Fi and hosts an HTTP server on port 80
+  - Browser at http://<esp32-ip>/ shows a slider (0-180 degrees)
+  - Slider value is POSTed to /servo and drives the servo position
+  - Set WIFI_SSID and WIFI_PASS in sdkconfig or via menuconfig
