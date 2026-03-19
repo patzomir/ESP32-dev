@@ -1,0 +1,12 @@
+{
+  "idf.currentSetup": "/Users/ptarkalanov/.espressif/v5.5.3/esp-idf",
+  "idf.port": "/dev/tty.usbserial-0001",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32"
+  },
+  "idf.openOcdConfigs": ["board/esp32-bridge.cfg"],
+  "idf.flashType": "UART",
+  "idf.customExtraVars": {
+    "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.local"
+  }
+}

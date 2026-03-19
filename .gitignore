@@ -2,9 +2,10 @@
 build/
 sdkconfig
 sdkconfig.old
+sdkconfig.local
+
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
