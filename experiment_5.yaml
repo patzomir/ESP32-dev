@@ -1,0 +1,167 @@
+connectors:
+  esp32:
+    pins: [GPIO18, GPIO19, GPIO21, GPIO22, GPIO23, 3V3, GND]
+
+  usb_power:
+    pins: [5V, GND]
+
+  servo_pan:
+    pins: [signal, vcc, gnd]
+
+  servo_tilt:
+    pins: [signal, vcc, gnd]
+
+  servo_trigger:
+    pins: [signal, vcc, gnd]
+
+  hcsr04:
+    pins: [vcc, trig, echo, gnd]
+    notes: HC-SR04 ultrasonic distance sensor (5V supply, 5V echo output — use voltage divider on echo)
+
+  voltage_divider:
+    # Brings HC-SR04 echo line from 5V down to ~3.3V safe for ESP32
+    # R1=1kΩ (echo → divider mid), R2=2kΩ (divider mid → GND)
+    pins: [in, out, gnd]
+
+  capacitor:
+    pins: [pos, neg]
+    value: 470uF
+
+  resistor:
+    pins: [pos, neg]
+    value: 220O
+
+connections:
+  # Servo control signals (unchanged from turret.yaml)
+  - esp32.GPIO18: servo_pan.signal
+  - esp32.GPIO19: servo_tilt.signal
+  - esp32.GPIO21: servo_trigger.signal
+
+  # Ultrasonic sensor control
+  - esp32.GPIO22: hcsr04.trig
+  - hcsr04.echo: voltage_divider.in
+  - voltage_divider.out: esp32.GPIO23
+
+  # Servo power (5V from USB)
+  - usb_power.5V: servo_pan.vcc
+  - usb_power.5V: servo_tilt.vcc
+  - usb_power.5V: servo_trigger.vcc
+  - usb_power.5V: hcsr04.vcc
+  - usb_power.5V: capacitor.pos
+  - usb_power.5V: resistor.pos
+
+  # Common ground
+  - usb_power.GND: servo_pan.gnd
+  - usb_power.GND: servo_tilt.gnd
+  - usb_power.GND: servo_trigger.gnd
+  - usb_power.GND: hcsr04.gnd
+  - usb_power.GND: voltage_divider.gnd
+  - usb_power.GND: capacitor.neg
+  - usb_power.GND: resistor.neg
+  - usb_power.GND: esp32.GND
+
+firmware:
+  new_pins:
+    GPIO22: HC-SR04 TRIG (output, active-high 10µs pulse)
+    GPIO23: HC-SR04 ECHO (input, measure pulse width for distance)
+
+  new_mode: scan
+  description: >
+    Adds a "Scan" mode to the web UI. When activated, the pan servo sweeps
+    from 0° to 180° in configurable steps, firing a sonar ping at each
+    position. If the measured distance is below a threshold (e.g. 50 cm)
+    the turret stops, locks onto the target angle, and optionally fires.
+    The current distance reading and scan status are exposed via a new
+    GET /scan/status JSON endpoint so the UI can display live feedback.
+
+  new_endpoints:
+    - method: POST
+      path: /scan/start
+      description: Starts the scan task (FreeRTOS task on core 1)
+
+    - method: POST
+      path: /scan/stop
+      description: Stops the scan task and returns pan to 90°
+
+    - method: GET
+      path: /scan/status
+      description: >
+        Returns JSON: {"scanning": bool, "pan": int, "distance_cm": float,
+        "target_found": bool}
+
+  sonar_driver:
+    trig_gpio: GPIO22
+    echo_gpio: GPIO23
+    measure: >
+      Pulse TRIG high for 10µs, then measure the width of the ECHO pulse
+      using esp_timer_get_time(). distance_cm = pulse_us / 58.0.
+    timeout_us: 30000   # ~5 m max range; treat as "no target" if exceeded
+
+power_budget:
+  supply: 5V / 3A (15W)
+
+  modules:
+    esp32:
+      typical_mA: 160
+      peak_mA: 240
+      notes: Wi-Fi active average ~160 mA; TX burst up to ~240 mA
+
+    servo_pan:
+      typical_mA: 150
+      peak_mA: 900
+      notes: SG90-class; ~150 mA moving under light load; stall up to 900 mA
+
+    servo_tilt:
+      typical_mA: 150
+      peak_mA: 900
+      notes: Same as pan; stationary during scan so closer to 10 mA idle
+
+    servo_trigger:
+      typical_mA: 10
+      peak_mA: 900
+      notes: Mostly idle; brief 500 ms pulse per shot
+
+    hcsr04:
+      typical_mA: 15
+      peak_mA: 15
+      notes: Constant ~15 mA during operation
+
+    voltage_divider:
+      typical_mA: 2
+      peak_mA: 2
+      notes: 5V / (1kΩ + 2kΩ) = 1.67 mA; negligible
+
+    keepalive_resistor_220R:
+      typical_mA: 23
+      peak_mA: 23
+      notes: 5V / 220Ω = 22.7 mA bleed to prevent PSU shutdown at no load
+
+  totals:
+    typical_mA: 510
+    # esp32 160 + pan 150 + tilt 150 + trigger 10 + hcsr04 15 + divider 2 + resistor 23
+    typical_headroom_mA: 2490
+
+    worst_case_mA: 2980
+    # esp32 240 + 3× servo stall (3×900=2700) + hcsr04 15 + divider 2 + resistor 23
+    worst_case_headroom_mA: 20
+    worst_case_warning: >
+      All three servos stalling simultaneously nearly saturates the 3A supply.
+      The 470 uF capacitor buffers brief transients but cannot sustain a stall.
+      In scan mode only the pan servo moves; tilt and trigger are idle (~10 mA
+      each), keeping worst-case closer to ~1.4 A — well within budget.
+
+  recommendations:
+    - Add software travel limits so servos never reach mechanical stall.
+    - Avoid commanding pan + tilt simultaneously against hard stops.
+    - The 470 uF cap buffers pan servo startup/reversal spikes during sweep;
+      keep it close to the servo power rail.
+
+notes:
+  - Builds on turret.yaml (3 servos + Wi-Fi HTTP server).
+  - HC-SR04 ECHO pin is 5V — a 1 kΩ / 2 kΩ voltage divider keeps GPIO23 safe.
+  - Alternatively, use an HC-SR04L (3.3 V variant) to skip the divider.
+  - Scan task should run at low priority; yield with vTaskDelay between pings
+    to avoid starving the HTTP server task.
+  - Detection threshold and step size should be configurable via sdkconfig or
+    #define constants (e.g. SCAN_STEP_DEG=5, SCAN_THRESHOLD_CM=50).
+  - Auto-fire on target detection is opt-in; default is stop + highlight in UI.

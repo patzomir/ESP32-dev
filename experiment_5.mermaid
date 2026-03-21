@@ -1,0 +1,31 @@
+flowchart LR
+    N_capacitor["capacitor<br/>470uF"]
+    N_esp32["esp32"]
+    N_hcsr04["hcsr04"]
+    N_resistor["resistor<br/>220O"]
+    N_servo_pan["servo_pan"]
+    N_servo_tilt["servo_tilt"]
+    N_servo_trigger["servo_trigger"]
+    N_usb_power["usb_power"]
+    N_voltage_divider["voltage_divider"]
+
+    N_esp32 -- "GPIO18 ↔ signal" --> N_servo_pan
+    N_esp32 -- "GPIO19 ↔ signal" --> N_servo_tilt
+    N_esp32 -- "GPIO21 ↔ signal" --> N_servo_trigger
+    N_esp32 -- "GPIO22 ↔ trig" --> N_hcsr04
+    N_hcsr04 -- "echo ↔ in" --> N_voltage_divider
+    N_voltage_divider -- "out ↔ GPIO23" --> N_esp32
+    N_usb_power -- "5V ↔ vcc" --> N_servo_pan
+    N_usb_power -- "5V ↔ vcc" --> N_servo_tilt
+    N_usb_power -- "5V ↔ vcc" --> N_servo_trigger
+    N_usb_power -- "5V ↔ vcc" --> N_hcsr04
+    N_usb_power -- "5V ↔ pos" --> N_capacitor
+    N_usb_power -- "5V ↔ pos" --> N_resistor
+    N_usb_power -- "GND ↔ gnd" --> N_servo_pan
+    N_usb_power -- "GND ↔ gnd" --> N_servo_tilt
+    N_usb_power -- "GND ↔ gnd" --> N_servo_trigger
+    N_usb_power -- "GND ↔ gnd" --> N_hcsr04
+    N_usb_power -- "GND ↔ gnd" --> N_voltage_divider
+    N_usb_power -- "GND ↔ neg" --> N_capacitor
+    N_usb_power -- "GND ↔ neg" --> N_resistor
+    N_usb_power -- "GND ↔ GND" --> N_esp32

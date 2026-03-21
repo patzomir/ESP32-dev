@@ -12,7 +12,7 @@
 #include "driver/gpio.h"
 #include "esp_http_server.h"
 
-static const char *TAG = "exp4";
+static const char *TAG = "turret";
 
 // --- Wi-Fi credentials: set via menuconfig (Component config > Experiment 4)
 #ifndef WIFI_SSID
@@ -25,51 +25,74 @@ static const char *TAG = "exp4";
 #define WIFI_CONNECTED_BIT BIT0
 static EventGroupHandle_t s_wifi_events;
 
-// --- Servo (LEDC)
-#define SERVO_PIN       GPIO_NUM_18
-#define LEDC_MODE       LEDC_LOW_SPEED_MODE
-#define LEDC_TIMER      LEDC_TIMER_0
-#define LEDC_CHANNEL    LEDC_CHANNEL_0
-#define LEDC_FREQ_HZ    50
-#define LEDC_DUTY_RES   LEDC_TIMER_13_BIT
+// --- Servos (LEDC)
+// Pins from turret.yaml: pan=GPIO18, tilt=GPIO19, trigger=GPIO21
+#define SERVO_PAN_PIN     GPIO_NUM_18
+#define SERVO_TILT_PIN    GPIO_NUM_19
+#define SERVO_TRIGGER_PIN GPIO_NUM_21
+
+#define LEDC_MODE     LEDC_LOW_SPEED_MODE
+#define LEDC_FREQ_HZ  50
+#define LEDC_DUTY_RES LEDC_TIMER_13_BIT
 
 // 50 Hz, 13-bit: period = 20 ms; 1 ms = 409 counts, 2 ms = 819 counts
-#define SERVO_DUTY_MIN  409
-#define SERVO_DUTY_MAX  819
+#define SERVO_DUTY_MIN 409
+#define SERVO_DUTY_MAX 819
 
-static void servo_set_angle(int angle)
+typedef enum {
+    SERVO_PAN     = 0,
+    SERVO_TILT    = 1,
+    SERVO_TRIGGER = 2,
+} servo_id_t;
+
+static const ledc_channel_t servo_channels[] = {
+    LEDC_CHANNEL_0,  // pan
+    LEDC_CHANNEL_1,  // tilt
+    LEDC_CHANNEL_2,  // trigger
+};
+
+static const gpio_num_t servo_pins[] = {
+    SERVO_PAN_PIN,
+    SERVO_TILT_PIN,
+    SERVO_TRIGGER_PIN,
+};
+
+static void servo_set_angle(servo_id_t id, int angle)
 {
     if (angle < 0)   angle = 0;
     if (angle > 180) angle = 180;
-    uint32_t duty = SERVO_DUTY_MIN + (uint32_t)((SERVO_DUTY_MAX - SERVO_DUTY_MIN) * angle / 180);
-    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty));
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL));
-    ESP_LOGI(TAG, "Servo angle: %d  duty: %lu", angle, (unsigned long)duty);
+    uint32_t duty = SERVO_DUTY_MIN +
+                    (uint32_t)((SERVO_DUTY_MAX - SERVO_DUTY_MIN) * angle / 180);
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, servo_channels[id], duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, servo_channels[id]));
+    ESP_LOGI(TAG, "Servo %d angle: %d  duty: %lu",
+             (int)id, angle, (unsigned long)duty);
 }
 
 static void servo_init(void)
 {
-    gpio_reset_pin(SERVO_PIN);
-
     ledc_timer_config_t timer = {
         .speed_mode      = LEDC_MODE,
-        .timer_num       = LEDC_TIMER,
+        .timer_num       = LEDC_TIMER_0,
         .duty_resolution = LEDC_DUTY_RES,
         .freq_hz         = LEDC_FREQ_HZ,
         .clk_cfg         = LEDC_USE_APB_CLK,
     };
     ESP_ERROR_CHECK(ledc_timer_config(&timer));
 
-    ledc_channel_config_t channel = {
-        .gpio_num   = SERVO_PIN,
-        .speed_mode = LEDC_MODE,
-        .channel    = LEDC_CHANNEL,
-        .intr_type  = LEDC_INTR_DISABLE,
-        .timer_sel  = LEDC_TIMER,
-        .duty       = SERVO_DUTY_MIN,
-        .hpoint     = 0,
-    };
-    ESP_ERROR_CHECK(ledc_channel_config(&channel));
+    for (int i = 0; i < 3; i++) {
+        gpio_reset_pin(servo_pins[i]);
+        ledc_channel_config_t channel = {
+            .gpio_num   = servo_pins[i],
+            .speed_mode = LEDC_MODE,
+            .channel    = servo_channels[i],
+            .intr_type  = LEDC_INTR_DISABLE,
+            .timer_sel  = LEDC_TIMER_0,
+            .duty       = SERVO_DUTY_MIN,
+            .hpoint     = 0,
+        };
+        ESP_ERROR_CHECK(ledc_channel_config(&channel));
+    }
 }
 
 // --- Wi-Fi
@@ -122,30 +145,93 @@ static void wifi_init(void)
 // --- HTTP handlers
 static const char *INDEX_HTML =
     "<!DOCTYPE html><html><head>"
+    "<meta charset='UTF-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Servo Control</title>"
+    "<title>Turret Control</title>"
     "<style>"
     "body{font-family:sans-serif;display:flex;flex-direction:column;"
-    "align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e;color:#eee;}"
-    "h1{margin-bottom:2rem;font-size:1.8rem;}"
-    "input[type=range]{width:80vw;max-width:400px;accent-color:#e94560;}"
-    "#angle{font-size:3rem;font-weight:bold;margin:1rem 0;color:#e94560;}"
+    "align-items:center;justify-content:center;height:100vh;margin:0;"
+    "background:#1a1a2e;color:#eee;gap:2rem;}"
+    "h1{margin:0;font-size:1.8rem;}"
+    ".axis{display:flex;flex-direction:column;align-items:center;gap:.6rem;}"
+    "label{font-size:1rem;color:#aaa;}"
+    ".controls{display:flex;align-items:center;gap:.6rem;}"
+    ".btn{width:3.2rem;height:3.2rem;font-size:1.4rem;background:#e94560;"
+    "color:#fff;border:none;border-radius:8px;cursor:pointer;"
+    "user-select:none;touch-action:none;}"
+    ".btn:active{background:#c73652;}"
+    "input[type=number]{width:5rem;text-align:center;font-size:1.5rem;"
+    "font-weight:bold;color:#e94560;background:#16213e;"
+    "border:2px solid #e94560;border-radius:8px;padding:.3rem;}"
+    "input[type=number]::-webkit-inner-spin-button,"
+    "input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}"
+    "input[type=number]{-moz-appearance:textfield;}"
+    ".fire{padding:.8rem 3rem;font-size:1.2rem;background:#e94560;"
+    "color:#fff;border:none;border-radius:8px;cursor:pointer;}"
+    ".fire:active{background:#c73652;}"
     "</style></head><body>"
-    "<h1>Servo Control</h1>"
-    "<div id='angle'>90&deg;</div>"
-    "<input type='range' min='0' max='180' value='90' id='slider'>"
+    "<h1>Turret Control</h1>"
+    "<div class='axis'>"
+    "  <label>Pan (Horizontal)</label>"
+    "  <div class='controls'>"
+    "    <button class='btn' id='pan-dec'>&#9668;</button>"
+    "    <input type='number' id='pan-val' min='0' max='180' value='90'>"
+    "    <button class='btn' id='pan-inc'>&#9658;</button>"
+    "  </div>"
+    "</div>"
+    "<div class='axis'>"
+    "  <label>Tilt (Vertical)</label>"
+    "  <div class='controls'>"
+    "    <button class='btn' id='tilt-inc'>&#9650;</button>"
+    "    <input type='number' id='tilt-val' min='0' max='180' value='90'>"
+    "    <button class='btn' id='tilt-dec'>&#9660;</button>"
+    "  </div>"
+    "</div>"
+    "<button class='fire' onclick='fire()'>FIRE</button>"
     "<script>"
-    "const slider=document.getElementById('slider');"
-    "const label=document.getElementById('angle');"
-    "let timer=null;"
-    "slider.addEventListener('input',()=>{"
-    "  label.textContent=slider.value+'\\u00b0';"
-    "  clearTimeout(timer);"
-    "  timer=setTimeout(()=>sendAngle(slider.value),80);"
-    "});"
-    "function sendAngle(v){"
-    "  fetch('/servo',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-    "  body:'angle='+v}).catch(console.error);"
+    "var STEP=5;"
+    "function send(servo,val){"
+    "  fetch('/servo',{method:'POST',"
+    "    headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+    "    body:servo+'='+val}).catch(console.error);"
+    "}"
+    "function clamp(v){return Math.max(0,Math.min(180,v));}"
+    "function bindAxis(inputId,decId,incId,servo){"
+    "  var inp=document.getElementById(inputId);"
+    "  function sendVal(){"
+    "    var v=clamp(parseInt(inp.value)||0);"
+    "    inp.value=v;"
+    "    send(servo,v);"
+    "  }"
+    "  function step(delta){"
+    "    inp.value=clamp((parseInt(inp.value)||0)+delta);"
+    "    sendVal();"
+    "  }"
+    "  inp.addEventListener('change',sendVal);"
+    "  inp.addEventListener('keydown',function(e){if(e.key==='Enter')sendVal();});"
+    "  function bindBtn(btnId,delta){"
+    "    var btn=document.getElementById(btnId);"
+    "    var timer,interval;"
+    "    function start(){"
+    "      step(delta);"
+    "      timer=setTimeout(function(){"
+    "        interval=setInterval(function(){step(delta);},120);"
+    "      },350);"
+    "    }"
+    "    function stop(){clearTimeout(timer);clearInterval(interval);}"
+    "    btn.addEventListener('mousedown',start);"
+    "    btn.addEventListener('touchstart',function(e){e.preventDefault();start();});"
+    "    btn.addEventListener('mouseup',stop);"
+    "    btn.addEventListener('mouseleave',stop);"
+    "    btn.addEventListener('touchend',stop);"
+    "  }"
+    "  bindBtn(decId,-STEP);"
+    "  bindBtn(incId,STEP);"
+    "}"
+    "bindAxis('pan-val','pan-dec','pan-inc','pan');"
+    "bindAxis('tilt-val','tilt-dec','tilt-inc','tilt');"
+    "function fire(){"
+    "  fetch('/trigger',{method:'POST'}).catch(console.error);"
     "}"
     "</script></body></html>";
 
@@ -156,21 +242,36 @@ static esp_err_t get_index(httpd_req_t *req)
     return ESP_OK;
 }
 
+// POST /servo  body: "pan=<0-180>" or "tilt=<0-180>"
 static esp_err_t post_servo(httpd_req_t *req)
 {
     char buf[32] = {0};
-    int len = req->content_len < (int)sizeof(buf) - 1 ? req->content_len : (int)sizeof(buf) - 1;
+    int len = req->content_len < (int)sizeof(buf) - 1
+                  ? req->content_len
+                  : (int)sizeof(buf) - 1;
     if (httpd_req_recv(req, buf, len) <= 0) {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
 
-    // Body is "angle=<value>"
-    char *val = strstr(buf, "angle=");
-    if (val) {
-        int angle = atoi(val + 6);
-        servo_set_angle(angle);
-    }
+    char *val;
+    if ((val = strstr(buf, "pan=")) != NULL)
+        servo_set_angle(SERVO_PAN, atoi(val + 4));
+    if ((val = strstr(buf, "tilt=")) != NULL)
+        servo_set_angle(SERVO_TILT, atoi(val + 5));
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "OK", 2);
+    return ESP_OK;
+}
+
+// POST /trigger  pulses the trigger servo to 90° then returns to 0°
+static esp_err_t post_trigger(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Firing trigger");
+    servo_set_angle(SERVO_TRIGGER, 90);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    servo_set_angle(SERVO_TRIGGER, 0);
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, "OK", 2);
@@ -191,12 +292,19 @@ static httpd_handle_t start_webserver(void)
     };
     httpd_register_uri_handler(server, &uri_get);
 
-    httpd_uri_t uri_post = {
+    httpd_uri_t uri_servo = {
         .uri     = "/servo",
         .method  = HTTP_POST,
         .handler = post_servo,
     };
-    httpd_register_uri_handler(server, &uri_post);
+    httpd_register_uri_handler(server, &uri_servo);
+
+    httpd_uri_t uri_trigger = {
+        .uri     = "/trigger",
+        .method  = HTTP_POST,
+        .handler = post_trigger,
+    };
+    httpd_register_uri_handler(server, &uri_trigger);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", config.server_port);
     return server;
@@ -205,15 +313,15 @@ static httpd_handle_t start_webserver(void)
 // --- Entry point
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ESP32 experiment 4: Wi-Fi web server + servo slider");
+    ESP_LOGI(TAG, "Turret: Wi-Fi web server + pan/tilt/trigger servos");
 
     ESP_ERROR_CHECK(nvs_flash_init());
 
     servo_init();
-    servo_set_angle(90); // start at center
+    servo_set_angle(SERVO_PAN, 90);
+    servo_set_angle(SERVO_TILT, 90);
+    servo_set_angle(SERVO_TRIGGER, 0);
 
     wifi_init();
     start_webserver();
-
-    // Nothing left to do — HTTP server and Wi-Fi run on their own tasks
 }
