@@ -39,3 +39,9 @@ connections:
   - usb_power.GND: capacitor.neg
   - usb_power.GND: resistor.neg
   - usb_power.GND: esp32.GND
+
+notes:
+  - ESP32 connects to Wi-Fi and hosts an HTTP server on port 80
+  - Browser at http://<esp32-ip>/ shows a 2 sliders (0-180 degrees) vertical and horizontal
+  - Slider value is POSTed to /servo and drives the servo position
+  - Set WIFI_SSID and WIFI_PASS in sdkconfig or via menuconfig
