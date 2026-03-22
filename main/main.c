@@ -69,6 +69,21 @@ static void servo_set_angle(servo_id_t id, int angle)
              (int)id, angle, (unsigned long)duty);
 }
 
+// --- Pan sweep task
+static TaskHandle_t s_sweep_task = NULL;
+
+static void sweep_task(void *arg)
+{
+    int angle = 90, dir = 1;
+    for (;;) {
+        servo_set_angle(SERVO_PAN, angle);
+        angle += dir;
+        if (angle >= 180) { angle = 180; dir = -1; }
+        else if (angle <= 0) { angle = 0;  dir =  1; }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 static void servo_init(void)
 {
     ledc_timer_config_t timer = {
@@ -194,21 +209,10 @@ static const char *INDEX_HTML =
     "</label>"
     "<script>"
     "var STEP=1;"
-    "var sweepTimer=null,sweepDir=1,sweepAngle=90;"
     "document.getElementById('pan-sweep').addEventListener('change',function(){"
-    "  if(this.checked){"
-    "    sweepAngle=parseInt(document.getElementById('pan-val').value)||90;"
-    "    sweepDir=1;"
-    "    sweepTimer=setInterval(function(){"
-    "      sweepAngle+=sweepDir*STEP;"
-    "      if(sweepAngle>=180){sweepAngle=180;sweepDir=-1;}"
-    "      else if(sweepAngle<=0){sweepAngle=0;sweepDir=1;}"
-    "      document.getElementById('pan-val').value=sweepAngle;"
-    "      send('pan',sweepAngle);"
-    "    },30);"
-    "  }else{"
-    "    clearInterval(sweepTimer);sweepTimer=null;"
-    "  }"
+    "  fetch('/sweep',{method:'POST',"
+    "    headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+    "    body:'running='+(this.checked?'1':'0')}).catch(console.error);"
     "});"
     "var _inflight={};"
     "var _pending={};"
@@ -310,6 +314,36 @@ static esp_err_t post_trigger(httpd_req_t *req)
     return ESP_OK;
 }
 
+// POST /sweep  body: "running=1" or "running=0"
+static esp_err_t post_sweep(httpd_req_t *req)
+{
+    char buf[32] = {0};
+    int len = req->content_len < (int)sizeof(buf) - 1
+                  ? req->content_len
+                  : (int)sizeof(buf) - 1;
+    if (httpd_req_recv(req, buf, len) <= 0) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    char *val = strstr(buf, "running=");
+    if (val) {
+        int running = atoi(val + 8);
+        if (running && s_sweep_task == NULL) {
+            xTaskCreate(sweep_task, "sweep", 2048, NULL, 5, &s_sweep_task);
+            ESP_LOGI(TAG, "Sweep started");
+        } else if (!running && s_sweep_task != NULL) {
+            vTaskDelete(s_sweep_task);
+            s_sweep_task = NULL;
+            ESP_LOGI(TAG, "Sweep stopped");
+        }
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "OK", 2);
+    return ESP_OK;
+}
+
 static httpd_handle_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -337,6 +371,13 @@ static httpd_handle_t start_webserver(void)
         .handler = post_trigger,
     };
     httpd_register_uri_handler(server, &uri_trigger);
+
+    httpd_uri_t uri_sweep = {
+        .uri     = "/sweep",
+        .method  = HTTP_POST,
+        .handler = post_sweep,
+    };
+    httpd_register_uri_handler(server, &uri_sweep);
 
     ESP_LOGI(TAG, "HTTP server started on port %d", config.server_port);
     return server;
