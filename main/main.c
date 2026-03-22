@@ -27,28 +27,29 @@ static EventGroupHandle_t s_wifi_events;
 
 // --- Servos (LEDC)
 // Pins from turret.yaml: pan=GPIO18, tilt=GPIO19, trigger=GPIO21
-#define SERVO_PAN_PIN     GPIO_NUM_18
-#define SERVO_TILT_PIN    GPIO_NUM_19
+#define SERVO_PAN_PIN GPIO_NUM_18
+#define SERVO_TILT_PIN GPIO_NUM_19
 #define SERVO_TRIGGER_PIN GPIO_NUM_21
 
-#define LEDC_MODE     LEDC_LOW_SPEED_MODE
-#define LEDC_FREQ_HZ  50
+#define LEDC_MODE LEDC_LOW_SPEED_MODE
+#define LEDC_FREQ_HZ 50
 #define LEDC_DUTY_RES LEDC_TIMER_13_BIT
 
 // 50 Hz, 13-bit: period = 20 ms; 1 ms = 409 counts, 2 ms = 819 counts
 #define SERVO_DUTY_MIN 409
 #define SERVO_DUTY_MAX 819
 
-typedef enum {
-    SERVO_PAN     = 0,
-    SERVO_TILT    = 1,
+typedef enum
+{
+    SERVO_PAN = 0,
+    SERVO_TILT = 1,
     SERVO_TRIGGER = 2,
 } servo_id_t;
 
 static const ledc_channel_t servo_channels[] = {
-    LEDC_CHANNEL_0,  // pan
-    LEDC_CHANNEL_1,  // tilt
-    LEDC_CHANNEL_2,  // trigger
+    LEDC_CHANNEL_0, // pan
+    LEDC_CHANNEL_1, // tilt
+    LEDC_CHANNEL_2, // trigger
 };
 
 static const gpio_num_t servo_pins[] = {
@@ -59,52 +60,80 @@ static const gpio_num_t servo_pins[] = {
 
 static void servo_set_angle(servo_id_t id, int angle)
 {
-    if (angle < 0)   angle = 0;
-    if (angle > 180) angle = 180;
+    if (angle < 0)
+        angle = 0;
+    if (angle > 180)
+        angle = 180;
     uint32_t duty = SERVO_DUTY_MIN +
                     (uint32_t)((SERVO_DUTY_MAX - SERVO_DUTY_MIN) * angle / 180);
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, servo_channels[id], duty));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, servo_channels[id]));
-    ESP_LOGI(TAG, "Servo %d angle: %d  duty: %lu",
-             (int)id, angle, (unsigned long)duty);
 }
 
-// --- Pan sweep task
-static TaskHandle_t s_sweep_task = NULL;
+// --- Smooth motion task (pan + tilt interpolation, sweep)
+static volatile int pan_target = 90, tilt_target = 90;
+static volatile int pan_current = 90, tilt_current = 90;
+static volatile bool s_sweep_running = false;
 
-static void sweep_task(void *arg)
+static void servo_smooth_task(void *arg)
 {
-    int angle = 90, dir = 1;
-    for (;;) {
-        servo_set_angle(SERVO_PAN, angle);
-        angle += dir;
-        if (angle >= 180) { angle = 180; dir = -1; }
-        else if (angle <= 0) { angle = 0;  dir =  1; }
-        vTaskDelay(pdMS_TO_TICKS(20));
+    int sweep_angle = 90, sweep_dir = 1;
+    for (;;)
+    {
+        if (s_sweep_running)
+        {
+            sweep_angle += sweep_dir;
+            if (sweep_angle >= 180)
+            {
+                sweep_angle = 180;
+                sweep_dir = -1;
+            }
+            else if (sweep_angle <= 0)
+            {
+                sweep_angle = 0;
+                sweep_dir = 1;
+            }
+            pan_target = sweep_angle;
+        }
+
+        if (pan_current < pan_target)
+            pan_current++;
+        else if (pan_current > pan_target)
+            pan_current--;
+        servo_set_angle(SERVO_PAN, pan_current);
+
+        if (tilt_current < tilt_target)
+            tilt_current++;
+        else if (tilt_current > tilt_target)
+            tilt_current--;
+        servo_set_angle(SERVO_TILT, tilt_current);
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
 static void servo_init(void)
 {
     ledc_timer_config_t timer = {
-        .speed_mode      = LEDC_MODE,
-        .timer_num       = LEDC_TIMER_0,
+        .speed_mode = LEDC_MODE,
+        .timer_num = LEDC_TIMER_0,
         .duty_resolution = LEDC_DUTY_RES,
-        .freq_hz         = LEDC_FREQ_HZ,
-        .clk_cfg         = LEDC_USE_APB_CLK,
+        .freq_hz = LEDC_FREQ_HZ,
+        .clk_cfg = LEDC_USE_APB_CLK,
     };
     ESP_ERROR_CHECK(ledc_timer_config(&timer));
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++)
+    {
         gpio_reset_pin(servo_pins[i]);
         ledc_channel_config_t channel = {
-            .gpio_num   = servo_pins[i],
+            .gpio_num = servo_pins[i],
             .speed_mode = LEDC_MODE,
-            .channel    = servo_channels[i],
-            .intr_type  = LEDC_INTR_DISABLE,
-            .timer_sel  = LEDC_TIMER_0,
-            .duty       = SERVO_DUTY_MIN,
-            .hpoint     = 0,
+            .channel = servo_channels[i],
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = SERVO_DUTY_MIN,
+            .hpoint = 0,
         };
         ESP_ERROR_CHECK(ledc_channel_config(&channel));
     }
@@ -114,12 +143,17 @@ static void servo_init(void)
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                                int32_t id, void *data)
 {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
+    {
         esp_wifi_connect();
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    }
+    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+    {
         ESP_LOGW(TAG, "Wi-Fi disconnected, retrying...");
         esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    }
+    else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+    {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
@@ -144,7 +178,7 @@ static void wifi_init(void)
 
     wifi_config_t wifi_cfg = {
         .sta = {
-            .ssid     = WIFI_SSID,
+            .ssid = WIFI_SSID,
             .password = WIFI_PASS,
         },
     };
@@ -285,16 +319,17 @@ static esp_err_t post_servo(httpd_req_t *req)
     int len = req->content_len < (int)sizeof(buf) - 1
                   ? req->content_len
                   : (int)sizeof(buf) - 1;
-    if (httpd_req_recv(req, buf, len) <= 0) {
+    if (httpd_req_recv(req, buf, len) <= 0)
+    {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
 
     char *val;
     if ((val = strstr(buf, "pan=")) != NULL)
-        servo_set_angle(SERVO_PAN, atoi(val + 4));
+        pan_target = atoi(val + 4);
     if ((val = strstr(buf, "tilt=")) != NULL)
-        servo_set_angle(SERVO_TILT, atoi(val + 5));
+        tilt_target = atoi(val + 5);
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, "OK", 2);
@@ -304,7 +339,6 @@ static esp_err_t post_servo(httpd_req_t *req)
 // POST /trigger  pulses the trigger servo to 90° then returns to 0°
 static esp_err_t post_trigger(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Firing trigger");
     servo_set_angle(SERVO_TRIGGER, 90);
     vTaskDelay(pdMS_TO_TICKS(500));
     servo_set_angle(SERVO_TRIGGER, 10);
@@ -321,23 +355,15 @@ static esp_err_t post_sweep(httpd_req_t *req)
     int len = req->content_len < (int)sizeof(buf) - 1
                   ? req->content_len
                   : (int)sizeof(buf) - 1;
-    if (httpd_req_recv(req, buf, len) <= 0) {
+    if (httpd_req_recv(req, buf, len) <= 0)
+    {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
 
     char *val = strstr(buf, "running=");
-    if (val) {
-        int running = atoi(val + 8);
-        if (running && s_sweep_task == NULL) {
-            xTaskCreate(sweep_task, "sweep", 2048, NULL, 5, &s_sweep_task);
-            ESP_LOGI(TAG, "Sweep started");
-        } else if (!running && s_sweep_task != NULL) {
-            vTaskDelete(s_sweep_task);
-            s_sweep_task = NULL;
-            ESP_LOGI(TAG, "Sweep stopped");
-        }
-    }
+    if (val)
+        s_sweep_running = (atoi(val + 8) != 0);
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, "OK", 2);
@@ -352,29 +378,29 @@ static httpd_handle_t start_webserver(void)
     ESP_ERROR_CHECK(httpd_start(&server, &config));
 
     httpd_uri_t uri_get = {
-        .uri     = "/",
-        .method  = HTTP_GET,
+        .uri = "/",
+        .method = HTTP_GET,
         .handler = get_index,
     };
     httpd_register_uri_handler(server, &uri_get);
 
     httpd_uri_t uri_servo = {
-        .uri     = "/servo",
-        .method  = HTTP_POST,
+        .uri = "/servo",
+        .method = HTTP_POST,
         .handler = post_servo,
     };
     httpd_register_uri_handler(server, &uri_servo);
 
     httpd_uri_t uri_trigger = {
-        .uri     = "/trigger",
-        .method  = HTTP_POST,
+        .uri = "/trigger",
+        .method = HTTP_POST,
         .handler = post_trigger,
     };
     httpd_register_uri_handler(server, &uri_trigger);
 
     httpd_uri_t uri_sweep = {
-        .uri     = "/sweep",
-        .method  = HTTP_POST,
+        .uri = "/sweep",
+        .method = HTTP_POST,
         .handler = post_sweep,
     };
     httpd_register_uri_handler(server, &uri_sweep);
@@ -391,9 +417,8 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
 
     servo_init();
-    servo_set_angle(SERVO_PAN, 90);
-    servo_set_angle(SERVO_TILT, 90);
     servo_set_angle(SERVO_TRIGGER, 10);
+    xTaskCreate(servo_smooth_task, "servo_smooth", 2048, NULL, 5, NULL);
 
     wifi_init();
     start_webserver();
