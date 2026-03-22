@@ -193,7 +193,7 @@ static const char *INDEX_HTML =
     "  Rotate pan end to end continuously"
     "</label>"
     "<script>"
-    "var STEP=5;"
+    "var STEP=1;"
     "var sweepTimer=null,sweepDir=1,sweepAngle=90;"
     "document.getElementById('pan-sweep').addEventListener('change',function(){"
     "  if(this.checked){"
@@ -205,15 +205,27 @@ static const char *INDEX_HTML =
     "      else if(sweepAngle<=0){sweepAngle=0;sweepDir=1;}"
     "      document.getElementById('pan-val').value=sweepAngle;"
     "      send('pan',sweepAngle);"
-    "    },150);"
+    "    },30);"
     "  }else{"
     "    clearInterval(sweepTimer);sweepTimer=null;"
     "  }"
     "});"
-    "function send(servo,val){"
+    "var _inflight={};"
+    "var _pending={};"
+    "function _flush(servo){"
+    "  if(_pending[servo]===undefined)return;"
+    "  var v=_pending[servo];"
+    "  delete _pending[servo];"
+    "  _inflight[servo]=true;"
     "  fetch('/servo',{method:'POST',"
     "    headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-    "    body:servo+'='+val}).catch(console.error);"
+    "    body:servo+'='+v})"
+    "  .catch(function(){})"
+    "  .finally(function(){_inflight[servo]=false;_flush(servo);});"
+    "}"
+    "function send(servo,val){"
+    "  _pending[servo]=val;"
+    "  if(!_inflight[servo])_flush(servo);"
     "}"
     "function clamp(v){return Math.max(0,Math.min(180,v));}"
     "function bindAxis(inputId,decId,incId,servo){"
@@ -235,7 +247,7 @@ static const char *INDEX_HTML =
     "    function start(){"
     "      step(delta);"
     "      timer=setTimeout(function(){"
-    "        interval=setInterval(function(){step(delta);},120);"
+    "        interval=setInterval(function(){step(delta);},80);"
     "      },350);"
     "    }"
     "    function stop(){clearTimeout(timer);clearInterval(interval);}"
@@ -291,7 +303,7 @@ static esp_err_t post_trigger(httpd_req_t *req)
     ESP_LOGI(TAG, "Firing trigger");
     servo_set_angle(SERVO_TRIGGER, 90);
     vTaskDelay(pdMS_TO_TICKS(500));
-    servo_set_angle(SERVO_TRIGGER, 0);
+    servo_set_angle(SERVO_TRIGGER, 10);
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, "OK", 2);
@@ -340,7 +352,7 @@ void app_main(void)
     servo_init();
     servo_set_angle(SERVO_PAN, 90);
     servo_set_angle(SERVO_TILT, 90);
-    servo_set_angle(SERVO_TRIGGER, 0);
+    servo_set_angle(SERVO_TRIGGER, 10);
 
     wifi_init();
     start_webserver();
