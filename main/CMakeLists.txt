@@ -10,4 +10,5 @@ idf_component_register(
         esp_netif
         esp_http_server
         driver
+        esp_timer
 )

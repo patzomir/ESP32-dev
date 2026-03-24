@@ -108,17 +108,17 @@ power_budget:
 
     servo_pan:
       typical_mA: 150
-      peak_mA: 900
-      notes: SG90-class; ~150 mA moving under light load; stall up to 900 mA
+      peak_mA: 800
+      notes: SG90-class; ~150 mA moving under light load; stall up to 800 mA
 
     servo_tilt:
       typical_mA: 150
-      peak_mA: 900
+      peak_mA: 800
       notes: Same as pan; stationary during scan so closer to 10 mA idle
 
     servo_trigger:
       typical_mA: 10
-      peak_mA: 900
+      peak_mA: 800
       notes: Mostly idle; brief 500 ms pulse per shot
 
     hcsr04:
@@ -141,8 +141,8 @@ power_budget:
     # esp32 160 + pan 150 + tilt 150 + trigger 10 + hcsr04 15 + divider 2 + resistor 23
     typical_headroom_mA: 2490
 
-    worst_case_mA: 2980
-    # esp32 240 + 3× servo stall (3×900=2700) + hcsr04 15 + divider 2 + resistor 23
+    worst_case_mA: 2680
+    # esp32 240 + 3× servo stall (3×800=2400) + hcsr04 15 + divider 2 + resistor 23
     worst_case_headroom_mA: 20
     worst_case_warning: >
       All three servos stalling simultaneously nearly saturates the 3A supply.
